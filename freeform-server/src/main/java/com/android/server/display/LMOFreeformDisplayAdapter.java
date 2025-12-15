@@ -15,13 +15,11 @@ import android.view.Surface;
 import android.view.SurfaceControl;
 
 import java.io.PrintWriter;
-import java.util.concurrent.atomic.AtomicInteger;
 
 import com.android.server.display.feature.DisplayManagerFlags;
 import com.libremobileos.freeform.ILMOFreeformDisplayCallback;
 
 public class LMOFreeformDisplayAdapter extends DisplayAdapter {
-    private static final AtomicInteger sNextModeId = new AtomicInteger(1_000_000);
     private static final String TAG = "LMOFreeform/LMOFreeformDisplayAdapter";
     // Unique id prefix for freeform displays.
     public static final String UNIQUE_ID_PREFIX = "lmo-freeform:";
@@ -160,7 +158,7 @@ public class LMOFreeformDisplayAdapter extends DisplayAdapter {
                               FreeformFlags flags,
                               Surface surface, Callback callback, IBinder appToken) {
 
-       super(LMOFreeformDisplayAdapter.this, displayToken, uniqueId, getContext());
+            super(LMOFreeformDisplayAdapter.this, displayToken, uniqueId, getContext());
             mName = uniqueId;
             mRefreshRate = refreshRate;
             mDisplayPresentationDeadlineNanos = presentationDeadlineNanos;
@@ -169,7 +167,10 @@ public class LMOFreeformDisplayAdapter extends DisplayAdapter {
             mWidth = width;
             mHeight = height;
             mDensityDpi = density;
-            mMode = createMode(mWidth, mHeight, refreshRate);
+            mMode = new Display.Mode.Builder()
+                .setResolution(mWidth, mHeight)
+                .setRefreshRate(refreshRate)
+                .build();
             mCallback = callback;
             mAppToken = appToken;
             mPendingChanges |= PENDING_SURFACE_CHANGE;
@@ -181,15 +182,13 @@ public class LMOFreeformDisplayAdapter extends DisplayAdapter {
                 sendTraversalRequestLocked();
                 mWidth = width;
                 mHeight = height;
-                mMode = createMode(width, height, mRefreshRate);
+                mMode = new Display.Mode.Builder()
+                    .setResolution(width, height)
+                    .setRefreshRate(mRefreshRate)
+                    .build();
                 mDensityDpi = densityDpi;
                 mInfo = null;
             }
-        }
-
-        private Display.Mode createMode(int width, int height, float refreshRate) {
-            final int modeId = sNextModeId.getAndIncrement();
-            return new Display.Mode(modeId, width, height, refreshRate);
         }
 
         public void destroyLocked(boolean binderAlive) {
