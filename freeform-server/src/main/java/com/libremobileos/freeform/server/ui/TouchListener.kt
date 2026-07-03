@@ -66,6 +66,7 @@ class MaximizeClickListener(private val window: FreeformWindow): View.OnClickLis
 
 sealed interface PillAction {
     object CloseWindow : PillAction
+    object Minimize : PillAction
     object EnterFullscreen : PillAction
     object Back : PillAction
     object ShowControls : PillAction
@@ -178,7 +179,7 @@ class PillGestureController(
             return
         }
         when {
-            deltaY < -swipeThreshold -> dispatch(PillAction.CloseWindow)
+            deltaY < -swipeThreshold -> dispatch(PillAction.Minimize)
             deltaY > swipeThreshold -> dispatch(PillAction.EnterFullscreen)
             else -> animateBackToIdle()
         }
@@ -237,6 +238,13 @@ class PillGestureController(
         activeAction = null
         when (action) {
             PillAction.CloseWindow -> animateCloseThenRun { window.close() }
+            PillAction.Minimize -> {
+                if (!window.freeformConfig.isHangUp) {
+                    animateMinimizeThenRun { window.handleHangUp() }
+                } else {
+                    animateBackToIdle()
+                }
+            }
             PillAction.EnterFullscreen -> animateFullscreenThenRun { window.enterFullscreen() }
             PillAction.Back -> {
                 animateBackToIdle()
@@ -255,6 +263,21 @@ class PillGestureController(
             .scaleX(0.01f)
             .scaleY(0.01f)
             .setDuration(120L)
+            .withEndAction {
+                resetWindowHostBounds()
+                endAction()
+            }
+            .start()
+    }
+
+    private fun animateMinimizeThenRun(endAction: () -> Unit) {
+        val layout = window.freeformLayout ?: return endAction()
+        layout.animate()
+            .translationY(0f)
+            .alpha(1f)
+            .scaleX(1f)
+            .scaleY(1f)
+            .setDuration(140L)
             .withEndAction {
                 resetWindowHostBounds()
                 endAction()
