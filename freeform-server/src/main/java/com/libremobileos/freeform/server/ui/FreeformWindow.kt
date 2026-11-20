@@ -66,6 +66,18 @@ class FreeformWindow(
     private val hangUpGestureListener = HangUpGestureListener(this)
     private val defaultDisplayInfo = DisplayInfo()
     private val destroyRunnable = Runnable { destroy("destroyRunnable", true) }
+
+    // The keyboard is shown on the default display (the freeform display keeps the fallback IME
+    // policy), so it covers the bottom of the screen. Lift the window while it is open and put it
+    // back where it was once it closes.
+    private var imeLiftPx = 0
+    private var imeRestoreY = 0
+    private val imePollRunnable = object : Runnable {
+        override fun run() {
+            updateImeLift()
+            handler.postDelayed(this, IME_POLL_MS)
+        }
+    }
     
     private var appPackageName: String = ""
     private var appIcon: Drawable? = null
@@ -102,6 +114,8 @@ class FreeformWindow(
         private const val FREEFORM_PACKAGE = "com.libremobileos.freeform"
         private const val FREEFORM_LAYOUT = "view_freeform"
         private const val WINDOW_DESTROY_WAIT_MS = 10000L
+        private const val IME_POLL_MS = 150L
+        private const val IME_LIFT_DURATION_MS = 180L
         private const val DRAWABLE_CLOSE = "ic_minimize"
         private const val DRAWABLE_OPEN_FULL_SCREEN = "ic_maximize"
         private const val DRAWABLE_PIN = "ic_pin"
@@ -174,13 +188,6 @@ class FreeformWindow(
         Slog.i(TAG, "onDisplayAdd displayId=$displayId, $appConfig")
         handler.post {
             this.displayId = displayId
-            // Show the IME on the freeform display itself. Otherwise it is placed on the default
-            // display, the app never gets IME insets, and a second show request from the app is
-            // dropped client side, so the keyboard stops coming back after it was closed once.
-            runCatching {
-                SystemServiceHolder.windowManager
-                    .setDisplayImePolicy(displayId, WindowManager.DISPLAY_IME_POLICY_LOCAL)
-            }.onFailure { e -> Slog.w(TAG, "failed to set IME policy for display $displayId: $e") }
             freeformTaskStackListener = FreeformTaskStackListener(displayId, this)
             SystemServiceHolder.activityTaskManager.registerTaskStackListener(freeformTaskStackListener)
             if (appConfig.taskId != -1) {
@@ -216,6 +223,34 @@ class FreeformWindow(
                 resourceHolder.getLayoutChildViewByTag<View>(layout, "arrowBack")
                     ?.setOnClickListener(RightViewClickListener(displayId))
             }
+            handler.removeCallbacks(imePollRunnable)
+            handler.postDelayed(imePollRunnable, IME_POLL_MS)
+        }
+    }
+
+    /**
+     * The freeform display keeps the fallback IME policy, so the keyboard is shown full width at
+     * the bottom of the default display. Lift this window above it while it is open and move it
+     * back to where it was once it closes.
+     */
+    private fun updateImeLift() {
+        if (!isInitialized || freeformConfig.isHangUp) return
+        val imeHeight = runCatching {
+            SystemServiceHolder.windowManager.getImeVisibleHeight(Display.DEFAULT_DISPLAY)
+        }.getOrDefault(0)
+        if (imeHeight > 0) {
+            if (imeLiftPx != 0) return
+            if (freeformWindowView == null && freeformLayout == null) return
+            imeRestoreY = windowParams.y
+            // Never push the window past the top of the screen.
+            imeLiftPx = min(imeHeight, max(0, imeRestoreY))
+            FreeformAnimation.moveInScreenAnimator(
+                imeRestoreY, imeRestoreY - imeLiftPx, IME_LIFT_DURATION_MS, false, this)
+        } else if (imeLiftPx != 0) {
+            val from = windowParams.y
+            imeLiftPx = 0
+            FreeformAnimation.moveInScreenAnimator(
+                from, imeRestoreY, IME_LIFT_DURATION_MS, false, this)
         }
     }
 
@@ -646,6 +681,7 @@ class FreeformWindow(
     fun removeView(runDestroy: Boolean = true) {
         dlog(TAG, "removeView($runDestroy)")
         handler.removeCallbacks(destroyRunnable)
+        handler.removeCallbacks(imePollRunnable)
         
         (freeformWindowView ?: freeformLayout)?.let { layout ->
             handler.post {
