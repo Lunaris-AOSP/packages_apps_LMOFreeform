@@ -174,6 +174,13 @@ class FreeformWindow(
         Slog.i(TAG, "onDisplayAdd displayId=$displayId, $appConfig")
         handler.post {
             this.displayId = displayId
+            // Show the IME on the freeform display itself. Otherwise it is placed on the default
+            // display, the app never gets IME insets, and a second show request from the app is
+            // dropped client side, so the keyboard stops coming back after it was closed once.
+            runCatching {
+                SystemServiceHolder.windowManager
+                    .setDisplayImePolicy(displayId, WindowManager.DISPLAY_IME_POLICY_LOCAL)
+            }.onFailure { e -> Slog.w(TAG, "failed to set IME policy for display $displayId: $e") }
             freeformTaskStackListener = FreeformTaskStackListener(displayId, this)
             SystemServiceHolder.activityTaskManager.registerTaskStackListener(freeformTaskStackListener)
             if (appConfig.taskId != -1) {
