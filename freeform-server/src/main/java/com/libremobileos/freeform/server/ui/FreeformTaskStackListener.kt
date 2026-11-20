@@ -10,7 +10,6 @@ import android.view.Surface
 import android.window.TaskSnapshot
 import com.libremobileos.freeform.server.Debug.dlog
 import com.libremobileos.freeform.server.LMOFreeformServiceHolder
-import com.libremobileos.freeform.server.SystemServiceHolder
 import kotlin.math.max
 import kotlin.math.min
 
@@ -89,10 +88,6 @@ class FreeformTaskStackListener(
     override fun onTaskMovedToFront(taskInfo: ActivityManager.RunningTaskInfo?) {
         val displayId = taskInfo?.displayId ?: return
         if (this.displayId == displayId) {
-            // TODO: move to android.provider.Settings
-            // if (FreeformWindowManager.settings.showImeInFreeform) {
-            //     SystemServiceHolder.windowManager.setDisplayImePolicy(displayId, 0)
-            // }
             taskId = taskInfo.taskId
             dlog(TAG, "onTaskMovedToFront $taskId")
         }
