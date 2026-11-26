@@ -24,10 +24,6 @@ android_app {
     platform_apis: true,
     system_ext_specific: true,
     privileged: true,
-    static_libs: [
-        "androidx-constraintlayout_constraintlayout",
-        "androidx.cardview_cardview",
-    ],
     required: ["privapp_allowlist_com.libremobileos.freeform"],
 }
 

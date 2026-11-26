@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:id="@+id/freeform_pin" android:title="@string/freeform_pin" />
+    <item android:id="@+id/freeform_fullscreen" android:title="@string/freeform_fullscreen" />
+    <item android:id="@+id/freeform_close" android:title="@string/freeform_close" />
+</menu>

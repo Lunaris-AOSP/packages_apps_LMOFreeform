@@ -56,7 +56,6 @@ dependencies {
     implementation(libs.compose.livedata)
     implementation(libs.appcompat)
     implementation(libs.material)
-    implementation(libs.constraintlayout)
     implementation(libs.room.runtime)
     implementation(platform(libs.compose.bom))
     implementation(platform(libs.compose.bom))

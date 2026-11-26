@@ -29,7 +29,7 @@ object FreeformAnimation {
 
     fun toFullScreen(window: FreeformWindow, dur: Long, listener: Animator.AnimatorListener) {
         val layout = window.freeformWindowView ?: window.freeformLayout ?: return
-        val rootView = window.freeformRootView ?: return
+        val content = window.freeformLayout ?: return
         
         AnimatorSet().apply {
             play(
@@ -67,7 +67,7 @@ object FreeformAnimation {
             play(
                 ValueAnimator.ofInt(window.freeformConfig.width, window.defaultDisplayWidth).apply {
                     addUpdateListener {
-                        rootView.layoutParams = rootView.layoutParams.apply {
+                        content.layoutParams = content.layoutParams.apply {
                             width = it.animatedValue as Int
                         }
                     }
@@ -80,7 +80,7 @@ object FreeformAnimation {
             play(
                 ValueAnimator.ofInt(window.freeformConfig.height, window.defaultDisplayHeight).apply {
                     addUpdateListener {
-                        rootView.layoutParams = rootView.layoutParams.apply {
+                        content.layoutParams = content.layoutParams.apply {
                             height = it.animatedValue as Int
                         }
                     }

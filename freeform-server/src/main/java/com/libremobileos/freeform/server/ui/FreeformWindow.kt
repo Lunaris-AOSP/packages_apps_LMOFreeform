@@ -2,30 +2,29 @@ package com.libremobileos.freeform.server.ui
 
 import android.annotation.SuppressLint
 import android.content.Context
-import android.graphics.drawable.Drawable
+import android.graphics.Matrix
 import android.graphics.PixelFormat
 import android.graphics.SurfaceTexture
-import android.os.Build
 import android.os.Handler
 import android.provider.Settings
 import android.util.Slog
+import android.view.ContextThemeWrapper
 import android.view.Display
 import android.view.DisplayInfo
-import android.graphics.Matrix
-import android.view.InputDevice
 import android.view.GestureDetector
 import android.view.Gravity
 import android.view.IRotationWatcher
+import android.view.InputDevice
+import android.view.MenuInflater
 import android.view.MotionEvent
 import android.view.Surface
 import android.view.TextureView
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
-import android.view.animation.PathInterpolator
 import android.widget.FrameLayout
 import android.widget.ImageView
-import android.widget.TextView
+import android.widget.PopupMenu
 import com.android.server.LocalServices
 import com.android.server.wm.WindowManagerInternal
 import com.libremobileos.freeform.ILMOFreeformDisplayCallback
@@ -35,7 +34,6 @@ import com.libremobileos.freeform.server.SystemServiceHolder
 import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
-import kotlin.math.sign
 
 class FreeformWindow(
     val handler: Handler,
@@ -52,12 +50,12 @@ class FreeformWindow(
     private val resourceHolder = RemoteResourceHolder(context, FREEFORM_PACKAGE)
     var freeformLayout: ViewGroup? = null
     var freeformWindowView: ViewGroup? = null
-    var freeformRootView: ViewGroup? = null
     var freeformView: TextureView? = null
-    private var topBarView: View? = null
+    private var moveHandle: View? = null
+    private var moveHandleIconView: ImageView? = null
+    private val moveHandleIcon by lazy { resourceHolder.getDrawable("ic_move_handle") }
     private var bottomBarView: View? = null
-    private var appIconView: ImageView? = null
-    private var packageNameView: TextView? = null
+    private var actionsMenu: PopupMenu? = null
     var veilView: ViewGroup? = null
     private var displayId = Display.INVALID_DISPLAY
     var defaultDisplayWidth = context.resources.displayMetrics.widthPixels
@@ -67,8 +65,6 @@ class FreeformWindow(
     private val defaultDisplayInfo = DisplayInfo()
     private val destroyRunnable = Runnable { destroy("destroyRunnable", true) }
     
-    private var appPackageName: String = ""
-    private var appIcon: Drawable? = null
     private var isInitialized = false
 
     private val rotationWatcher = object : IRotationWatcher.Stub() {
@@ -79,9 +75,9 @@ class FreeformWindow(
             defaultDisplayRotation = context.display.rotation
             measureSize()
             handler.post {
-                changeOrientation()
+                actionsMenu?.dismiss()
                 if (freeformConfig.isHangUp) toHangUp()
-                else makeSureFreeformInScreen()
+                else changeOrientation()
             }
             measureScale()
             LMOFreeformServiceHolder.resizeFreeform(
@@ -101,18 +97,8 @@ class FreeformWindow(
         private const val TAG = "LMOFreeform/FreeformWindow"
         private const val FREEFORM_PACKAGE = "com.libremobileos.freeform"
         private const val FREEFORM_LAYOUT = "view_freeform"
+        private const val ACTIONS_MENU = "freeform_window_actions"
         private const val WINDOW_DESTROY_WAIT_MS = 10000L
-        private const val DRAWABLE_CLOSE = "ic_minimize"
-        private const val DRAWABLE_OPEN_FULL_SCREEN = "ic_maximize"
-        private const val DRAWABLE_PIN = "ic_pin"
-        const val TITLE_CLOSE = "Close"
-        const val TITLE_OPEN_FULL_SCREEN = "Open full screen"
-        const val TITLE_PIN = "Pin app"
-        private val M3_DECELERATE = PathInterpolator(0.05f, 0.7f, 0.1f, 1.0f)
-        private val M3_ACCELERATE = PathInterpolator(0.3f, 0.0f, 0.8f, 0.15f)
-        private const val M3_DURATION_EXIT = 60L
-        private const val M3_DURATION_ENTER = 110L
-        private const val SHIFT_DP = 4f
         private const val CONTROL_MODE_SETTING = "freeform_control_mode"
         private const val CONTROL_MODE_BUTTON = "Button"
         private const val CONTROL_MODE_GESTURE = "Gesture"
@@ -123,7 +109,6 @@ class FreeformWindow(
     init {
         if (LMOFreeformServiceHolder.ping()) {
             Slog.i(TAG, "FreeformWindow init")
-            extractPackageInfo()
             populateFreeformConfig()
             handler.post {
                 if (addFreeformView()) {
@@ -197,17 +182,6 @@ class FreeformWindow(
                 }
             } else {
                 startApp()
-            }
-
-            val layout = freeformLayout
-            if (layout == null) {
-                Slog.e(TAG, "freeformLayout is null")
-                destroy("onDisplayAdd:freeformLayout is null")
-                return@post
-            }
-            if (!isGestureMode) {
-                resourceHolder.getLayoutChildViewByTag<View>(layout, "arrowBack")
-                    ?.setOnClickListener(RightViewClickListener(displayId))
             }
         }
     }
@@ -298,86 +272,60 @@ class FreeformWindow(
     @SuppressLint("WrongConstant")
     private fun addFreeformView(): Boolean {
         dlog(TAG, "addFreeformView")
-        val tmpFreeformLayout = resourceHolder.getLayout(FREEFORM_LAYOUT)!! ?: return false
-        freeformLayout = tmpFreeformLayout
-        freeformWindowView = FrameLayout(context).apply {
-            clipChildren = false
-            clipToPadding = false
-            addView(
-                tmpFreeformLayout,
-                FrameLayout.LayoutParams(
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                    ViewGroup.LayoutParams.WRAP_CONTENT,
-                    Gravity.CENTER_HORIZONTAL or Gravity.BOTTOM
-                )
-            )
-        }
-        freeformRootView = resourceHolder.getLayoutChildViewByTag<FrameLayout>(tmpFreeformLayout, "freeform_root") ?: return false
-        veilView = resourceHolder.getLayoutChildViewByTag<FrameLayout>(tmpFreeformLayout, "veilView") ?: return false
-        topBarView = resourceHolder.getLayoutChildViewByTag(tmpFreeformLayout, "topBarView") ?: return false
-        bottomBarView = resourceHolder.getLayoutChildViewByTag(tmpFreeformLayout, "bottomBarView") ?: return false
-        val moveTouchListener = MoveTouchListener(this)
-        topBarView?.setOnTouchListener(moveTouchListener)
-        bottomBarView?.setOnTouchListener(moveTouchListener)
-        val appIconView = resourceHolder.getLayoutChildViewByTag<ImageView>(tmpFreeformLayout, "appIcon")
-        val packageNameView = resourceHolder.getLayoutChildViewByTag<TextView>(tmpFreeformLayout, "packageName")
-        val pinView = resourceHolder.getLayoutChildViewByTag<View>(tmpFreeformLayout, "pinView")
-        val maximizeView = resourceHolder.getLayoutChildViewByTag<View>(tmpFreeformLayout, "maximizeView")
-        val minimizeView = resourceHolder.getLayoutChildViewByTag<View>(tmpFreeformLayout, "minimizeView")
-        val leftScaleView = resourceHolder.getLayoutChildViewByTag<View>(tmpFreeformLayout, "leftScaleView")
-        val rightScaleView = resourceHolder.getLayoutChildViewByTag<View>(tmpFreeformLayout, "rightScaleView")
-        val gesturePillTouchView = resourceHolder.getLayoutChildViewByTag<View>(tmpFreeformLayout, "gesturePillTouchView")
-        val gesturePillView = resourceHolder.getLayoutChildViewByTag<View>(tmpFreeformLayout, "gesturePill")
-        val gesturePillPlateView = resourceHolder.getLayoutChildViewByTag<View>(tmpFreeformLayout, "gesturePillPlate")
-        val arrowBackView = resourceHolder.getLayoutChildViewByTag<View>(tmpFreeformLayout, "arrowBack")
-        val veilAppIconView = resourceHolder.getLayoutChildViewByTag<ImageView>(tmpFreeformLayout, "veilAppIcon")
-        if (null == leftScaleView || null == rightScaleView || null == pinView
-                || null == appIconView || null == packageNameView || null == veilAppIconView
-                || null == maximizeView || null == minimizeView
-                || null == gesturePillTouchView || null == gesturePillView || null == gesturePillPlateView
-                || null == arrowBackView) {
-            Slog.e(TAG, "freeform chrome view is null")
-            destroy("addFreeformView:freeform chrome view is null")
-            return false
-        }
-        this.appIconView = appIconView
-        this.packageNameView = packageNameView
-        veilAppIconView.setImageDrawable(appIcon)
-        appIconView.setImageDrawable(appIcon)
-        packageNameView.text = appPackageName
+        val layout = resourceHolder.getLayout(FREEFORM_LAYOUT) ?: return false
+        val handle = resourceHolder.getLayoutChildViewByTag<View>(layout, "moveHandle") ?: return false
+        moveHandle = handle
+        moveHandleIconView = resourceHolder.getLayoutChildViewByTag(layout, "moveHandleIcon") ?: return false
+        veilView = resourceHolder.getLayoutChildViewByTag(layout, "veilView") ?: return false
+        bottomBarView = resourceHolder.getLayoutChildViewByTag(layout, "bottomBarView") ?: return false
+        val leftScaleView = resourceHolder.getLayoutChildViewByTag<View>(layout, "leftScaleView") ?: return false
+        val rightScaleView = resourceHolder.getLayoutChildViewByTag<View>(layout, "rightScaleView") ?: return false
+        val gesturePillTouchView = resourceHolder.getLayoutChildViewByTag<View>(layout, "gesturePillTouchView") ?: return false
+        val gesturePillView = resourceHolder.getLayoutChildViewByTag<View>(layout, "gesturePill") ?: return false
+        val arrowBackView = resourceHolder.getLayoutChildViewByTag<View>(layout, "arrowBack") ?: return false
+        val veilAppIconView = resourceHolder.getLayoutChildViewByTag<ImageView>(layout, "veilAppIcon") ?: return false
+
+        runCatching { context.packageManager.getApplicationIcon(appConfig.packageName) }
+            .onSuccess { veilAppIconView.setImageDrawable(it) }
+            .onFailure { Slog.w(TAG, "Failed to load the resize veil icon", it) }
+        handle.setOnClickListener { showWindowActions(it) }
+        handle.setOnTouchListener(MoveTouchListener(this))
         if (isGestureMode) {
-            pinView.visibility = View.GONE
-            maximizeView.visibility = View.GONE
-            minimizeView.visibility = View.GONE
-            gesturePillTouchView.visibility = View.VISIBLE
-            arrowBackView.visibility = View.GONE
-            gesturePillTouchView.setOnTouchListener(
-                PillGestureController(this, gesturePillView, gesturePillPlateView)
-            )
+            gesturePillTouchView.setOnClickListener { goBack() }
+            gesturePillTouchView.setOnTouchListener(PillGestureController(this, gesturePillView))
         } else {
-            pinView.visibility = View.VISIBLE
-            maximizeView.visibility = View.VISIBLE
-            minimizeView.visibility = View.VISIBLE
             gesturePillTouchView.visibility = View.GONE
             arrowBackView.visibility = View.VISIBLE
-            minimizeView.setOnClickListener(LeftViewClickListener(this))
-            maximizeView.setOnClickListener(MaximizeClickListener(this))
-            pinView.setOnClickListener(PinClickListener(this))
+            arrowBackView.setOnClickListener { goBack() }
         }
         leftScaleView.setOnTouchListener(ScaleTouchListener(this, false))
         rightScaleView.setOnTouchListener(ScaleTouchListener(this))
 
-        freeformView = FreeformTextureView(context).apply {
+        val view = FreeformTextureView(context).apply {
             setOnTouchListener(this@FreeformWindow)
             surfaceTextureListener = this@FreeformWindow
         }
-        val rootView = freeformRootView ?: return false
-        val view = freeformView ?: return false
-        rootView.layoutParams = rootView.layoutParams.apply {
-            width = freeformConfig.width
-            height = freeformConfig.height
+        freeformView = view
+        layout.addView(
+            view, 0, FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
+        )
+        freeformLayout = layout
+        val windowView = FrameLayout(context).apply {
+            clipChildren = false
+            clipToPadding = false
+            addView(
+                layout,
+                FrameLayout.LayoutParams(
+                    freeformConfig.width,
+                    freeformConfig.height,
+                    Gravity.CENTER_HORIZONTAL or Gravity.BOTTOM
+                )
+            )
         }
-        rootView.addView(view, ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+        freeformWindowView = windowView
         windowParams.apply {
             type = WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
             width = WindowManager.LayoutParams.WRAP_CONTENT
@@ -393,7 +341,6 @@ class FreeformWindow(
         // Set initial positioning based on sidebar position
         setSidebarAwarePosition()
         
-        val windowView = freeformWindowView ?: freeformLayout ?: return false
         runCatching {
             windowManager.addView(windowView, windowParams)
             SystemServiceHolder.windowManager.watchRotation(rotationWatcher, Display.DEFAULT_DISPLAY)
@@ -405,14 +352,40 @@ class FreeformWindow(
         return true
     }
 
+    private fun showWindowActions(anchor: View) {
+        if (!anchor.isAttachedToWindow || actionsMenu != null) return
+
+        val resources = anchor.resources
+        val menuId = resources.getIdentifier(ACTIONS_MENU, "menu", FREEFORM_PACKAGE)
+        if (menuId == 0) {
+            Slog.w(TAG, "Missing window actions menu")
+            return
+        }
+        val popupContext = ContextThemeWrapper(context, android.R.style.Theme_DeviceDefault_DayNight)
+        val popup = PopupMenu(popupContext, anchor, Gravity.END)
+        MenuInflater(anchor.context).inflate(menuId, popup.menu)
+        popup.setOnMenuItemClickListener {
+            when (resources.getResourceEntryName(it.itemId)) {
+                "freeform_pin" -> handleHangUp()
+                "freeform_fullscreen" -> enterFullscreen()
+                "freeform_close" -> close()
+                else -> return@setOnMenuItemClickListener false
+            }
+            true
+        }
+        popup.setOnDismissListener { actionsMenu = null }
+        runCatching { popup.show() }
+            .onSuccess { actionsMenu = popup }
+            .onFailure { Slog.w(TAG, "Failed to show window actions", it) }
+    }
+
     /**
      * Called in system handler
      */
     @SuppressLint("ClickableViewAccessibility")
     fun handleHangUp() {
-        val rootView = freeformRootView ?: return
-        val layout = freeformWindowView ?: freeformLayout ?: return
-        val topBar = topBarView ?: return
+        val layout = freeformWindowView ?: return
+        val handle = moveHandle ?: return
         val bottomBar = bottomBarView ?: return
         val view = freeformView ?: return
         
@@ -422,20 +395,18 @@ class FreeformWindow(
                 y = freeformConfig.notInHangUpY
                 flags = flags or WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM
             }
-            rootView.layoutParams.apply {
-                width = freeformConfig.width
-                height = freeformConfig.height
-            }
+            restoreWindowSize()
             windowManager.updateViewLayout(layout, windowParams)
-            topBar.visibility = View.VISIBLE
+            handle.visibility = View.VISIBLE
             bottomBar.visibility = View.VISIBLE
             freeformConfig.isHangUp = false
             view.setOnTouchListener(this)
+            makeSureFreeformInScreen()
         } else {
             freeformConfig.notInHangUpX = windowParams.x
             freeformConfig.notInHangUpY = windowParams.y
             toHangUp()
-            topBar.visibility = View.GONE
+            handle.visibility = View.GONE
             bottomBar.visibility = View.GONE
             freeformConfig.isHangUp = true
             val gestureDetector = GestureDetector(context, hangUpGestureListener)
@@ -450,19 +421,15 @@ class FreeformWindow(
     /**
      * Called in system handler
      */
-    fun toHangUp() {
-        val rootView = freeformRootView ?: return
-        val layout = freeformWindowView ?: freeformLayout ?: return
+    private fun toHangUp() {
+        val layout = freeformWindowView ?: return
         
         windowParams.apply {
             x = (defaultDisplayWidth / 2 - freeformConfig.hangUpWidth / 2)
             y = -(defaultDisplayHeight / 2 - freeformConfig.hangUpHeight / 2)
-            flags = flags xor WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM
+            flags = flags and WindowManager.LayoutParams.FLAG_ALT_FOCUSABLE_IM.inv()
         }
-        rootView.layoutParams = rootView.layoutParams.apply {
-            width = freeformConfig.hangUpWidth
-            height = freeformConfig.hangUpHeight
-        }
+        setWindowSize(freeformConfig.hangUpWidth, freeformConfig.hangUpHeight)
         runCatching { windowManager.updateViewLayout(layout, windowParams) }.onFailure { Slog.e(TAG, "$it") }
     }
 
@@ -470,35 +437,34 @@ class FreeformWindow(
      * Called in uiHandler
      */
     fun makeSureFreeformInScreen() {
-        val rootView = freeformRootView ?: return
-        
-        if (!freeformConfig.isHangUp) {
-            val maxWidth = defaultDisplayWidth
-            val maxHeight = (defaultDisplayHeight * 0.9).roundToInt()
-            if (rootView.layoutParams.width > maxWidth || rootView.layoutParams.height > maxHeight) {
-                rootView.layoutParams = rootView.layoutParams.apply {
-                    width = min(rootView.width, maxWidth)
-                    height = min(rootView.height, maxHeight)
-                }
-            }
-        }
-        if (windowParams.x < -(defaultDisplayWidth / 2)) FreeformAnimation.moveInScreenAnimator(windowParams.x, -(defaultDisplayWidth / 2), 300, true, this)
-        else if (windowParams.x > (defaultDisplayWidth / 2)) FreeformAnimation.moveInScreenAnimator(windowParams.x, (defaultDisplayWidth / 2), 300, true, this)
-        if (windowParams.y < -(defaultDisplayHeight / 2)) FreeformAnimation.moveInScreenAnimator(windowParams.y, -(defaultDisplayHeight / 2), 300, false, this)
-        else if (windowParams.y > (defaultDisplayHeight / 2)) FreeformAnimation.moveInScreenAnimator(windowParams.y, (defaultDisplayHeight / 2), 300, false, this)
+        val size = freeformLayout?.layoutParams ?: return
+        val maxX = ((defaultDisplayWidth - size.width) / 2).coerceAtLeast(0)
+        val maxY = ((defaultDisplayHeight - size.height) / 2).coerceAtLeast(0)
+        val x = windowParams.x.coerceIn(-maxX, maxX)
+        val y = windowParams.y.coerceIn(-maxY, maxY)
+        if (x != windowParams.x) FreeformAnimation.moveInScreenAnimator(windowParams.x, x, 300, true, this)
+        if (y != windowParams.y) FreeformAnimation.moveInScreenAnimator(windowParams.y, y, 300, false, this)
     }
 
-    /**
-     * Change freeform orientation
-     * Called in system handler
-     */
-    fun changeOrientation() {
-        val rootView = freeformRootView ?: return
-        
-        rootView.layoutParams = rootView.layoutParams.apply {
-            width = if (freeformConfig.isHangUp) freeformConfig.hangUpWidth else freeformConfig.width
-            height = if (freeformConfig.isHangUp) freeformConfig.hangUpHeight else freeformConfig.height
+    fun setWindowSize(width: Int, height: Int) {
+        val layout = freeformLayout ?: return
+        layout.layoutParams = layout.layoutParams.apply {
+            this.width = width
+            this.height = height
         }
+    }
+
+    fun restoreWindowSize() {
+        setWindowSize(freeformConfig.width, freeformConfig.height)
+    }
+
+    fun changeOrientation() {
+        if (freeformConfig.isHangUp) {
+            setWindowSize(freeformConfig.hangUpWidth, freeformConfig.hangUpHeight)
+        } else {
+            restoreWindowSize()
+        }
+        makeSureFreeformInScreen()
     }
 
     fun getFreeformId(): String {
@@ -510,108 +476,19 @@ class FreeformWindow(
         LMOFreeformServiceHolder.back(displayId)
     }
 
-    val closeIcon: Drawable?
-        get() = resourceHolder.getDrawable(DRAWABLE_CLOSE)
-
-    val openFullScreenIcon: Drawable?
-        get() = resourceHolder.getDrawable(DRAWABLE_OPEN_FULL_SCREEN)
-
-    val pinIcon: Drawable?
-        get() = resourceHolder.getDrawable(DRAWABLE_PIN)
-
-    fun updateTitle(
-        title: CharSequence?,
-        icon: Drawable? = null,
-        directionY: Float = 0f,
-        animated: Boolean = true
-    ) {
-        val text = title ?: return
-        if (!handler.looper.isCurrentThread) {
-            handler.post { updateTitle(text, icon, directionY, animated) }
-            return
-        }
-
-        val nameView = packageNameView ?: return
-        val iconView = appIconView
-
-        if (nameView.text == text) {
-            if (nameView.alpha == 1f && nameView.translationY == 0f) return
-            nameView.animate().cancel()
-            iconView?.animate()?.cancel()
-            nameView.animate()
-                .alpha(1f)
-                .translationY(0f)
-                .setDuration(M3_DURATION_ENTER)
-                .setInterpolator(M3_DECELERATE)
-                .start()
-            iconView?.animate()
-                ?.alpha(1f)
-                ?.translationY(0f)
-                ?.setDuration(M3_DURATION_ENTER)
-                ?.setInterpolator(M3_DECELERATE)
-                ?.start()
-            return
-        }
-
-        if (!animated) {
-            nameView.animate().cancel()
-            iconView?.animate()?.cancel()
-            nameView.text = text
-            nameView.alpha = 1f
-            nameView.translationY = 0f
-            icon?.let { iconView?.setImageDrawable(it) }
-            iconView?.alpha = 1f
-            iconView?.translationY = 0f
-            return
-        }
-
-        val shiftPx = SHIFT_DP * context.resources.displayMetrics.density * (if (directionY != 0f) sign(directionY) else -1f)
-
-        nameView.animate().cancel()
-        iconView?.animate()?.cancel()
-
-        iconView?.animate()
-            ?.alpha(0f)
-            ?.translationY(shiftPx)
-            ?.setDuration(M3_DURATION_EXIT)
-            ?.setInterpolator(M3_ACCELERATE)
-            ?.start()
-
-        nameView.animate()
-            .alpha(0f)
-            .translationY(shiftPx)
-            .setDuration(M3_DURATION_EXIT)
-            .setInterpolator(M3_ACCELERATE)
-            .withEndAction {
-                nameView.text = text
-                nameView.translationY = -shiftPx
-                nameView.animate()
-                    .alpha(1f)
-                    .translationY(0f)
-                    .setDuration(M3_DURATION_ENTER)
-                    .setInterpolator(M3_DECELERATE)
-                    .start()
-
-                iconView?.let { iv ->
-                    icon?.let { iv.setImageDrawable(it) }
-                    iv.translationY = -shiftPx
-                    iv.animate()
-                        .alpha(1f)
-                        .translationY(0f)
-                        .setDuration(M3_DURATION_ENTER)
-                        .setInterpolator(M3_DECELERATE)
-                        .start()
-                }
-            }
-            .start()
+    enum class WindowAction(val icon: String) {
+        Close("ic_minimize"),
+        Fullscreen("ic_maximize"),
+        Pin("ic_pin")
     }
 
-    fun resetTitle(directionY: Float = 0f, animated: Boolean = true) {
-        updateTitle(appPackageName, appIcon, directionY, animated)
+    fun showActionIcon(action: WindowAction?) {
+        moveHandleIconView?.setImageDrawable(
+            action?.let { resourceHolder.getDrawable(it.icon) } ?: moveHandleIcon
+        )
     }
 
     fun enterFullscreen() {
-        updateTitle(TITLE_OPEN_FULL_SCREEN, openFullScreenIcon, directionY = 1f)
         val listener = freeformTaskStackListener
         if (listener == null || listener.taskId == -1) {
             Slog.e(TAG, "taskId is -1, can`t move")
@@ -626,7 +503,6 @@ class FreeformWindow(
 
     fun close() {
         dlog(TAG, "close()")
-        updateTitle(TITLE_CLOSE, closeIcon, directionY = -1f)
         runCatching {
             SystemServiceHolder.activityTaskManager.removeTask(freeformTaskStackListener!!.taskId)
             removeView()
@@ -642,6 +518,7 @@ class FreeformWindow(
         
         (freeformWindowView ?: freeformLayout)?.let { layout ->
             handler.post {
+                actionsMenu?.dismiss()
                 runCatching {
                     windowManager.removeViewImmediate(layout)
                     dlog(TAG, "removeView success")
@@ -688,30 +565,9 @@ class FreeformWindow(
             }
         }
         
-        packageNameView?.animate()?.cancel()
-        packageNameView?.alpha = 1f
-        packageNameView?.translationY = 0f
-        appIconView?.animate()?.cancel()
-        appIconView?.alpha = 1f
-        appIconView?.translationY = 0f
-        packageNameView = null
-        appIconView = null
         isInitialized = false
     }
-    
-    private fun extractPackageInfo() {
-        try {
-            val pm = context.packageManager
-            val ai = pm.getApplicationInfo(appConfig.packageName, 0)
-            appPackageName = pm.getApplicationLabel(ai).toString()
-            appIcon = pm.getApplicationIcon(ai)
-        } catch (e: Exception) {
-            Slog.e(TAG, "Failed to retrieve app info: ${e.message}")
-            appPackageName = ""
-            appIcon = null
-        }
-    }
-    
+
     private fun setSidebarAwarePosition() {
         val isLandscape = defaultDisplayWidth > defaultDisplayHeight
         val windowWidth = freeformConfig.width

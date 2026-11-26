@@ -1,3 +1,8 @@
 <resources>
     <string name="app_name">LMOFreeform</string>
+    <string name="freeform_window_controls">Window controls</string>
+    <string name="freeform_back">Back</string>
+    <string name="freeform_pin">Pin app</string>
+    <string name="freeform_fullscreen">Open full screen</string>
+    <string name="freeform_close">Close</string>
 </resources>

@@ -12,7 +12,6 @@ lifecycle-viewmodel-ktx = "2.1.0"
 activity-compose = "1.7.0"
 compose-bom = "2023.03.00"
 androidx-appcompat-appcompat = "1.6.1"
-constraintlayout = "2.1.4"
 com-google-android-material-material = "1.9.0"
 hidden-api-bypass = "4.3"
 magic-library = "1.5"
@@ -37,8 +36,6 @@ lifecycle-runtime-ktx = { group = "androidx.lifecycle", name = "lifecycle-runtim
 lifecycle-viewmodel-ktx = { group = "androidx.lifecycle", name = "lifecycle-viewmodel-ktx", version.ref = "lifecycle-viewmodel-ktx" }
 activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activity-compose" }
 appcompat = { group = "dev.rikka.rikkax.appcompat", name = "appcompat", version.ref = "rikka-appcompat" }
-
-constraintlayout = { group = "androidx.constraintlayout", name = "constraintlayout", version.ref = "constraintlayout" }
 
 junit = { group = "junit", name = "junit", version.ref = "junit" }
 androidx-test-ext-junit = { group = "androidx.test.ext", name = "junit", version.ref = "androidx-test-ext-junit" }
